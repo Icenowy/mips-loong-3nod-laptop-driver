@@ -23,6 +23,8 @@
 #include <linux/jiffies.h>
 #include <linux/miscdevice.h>
 #include <asm/bootinfo.h>
+#include <linux/of.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <linux/module.h>
 #include "ec_it8528.h"
 #include <linux/dmi.h>
@@ -32,7 +34,7 @@
 #define OEM_STRING  "3Nod-laptop"
 
 /* sci gpio irq number */
-#define SCI_IRQ_NUM    123
+#define SCI_IRQ_NUM    59
 
 static struct platform_device *platform_device;
 
@@ -390,14 +392,22 @@ exit_event_action:
 static int sci_pci_init(void)
 {
 	struct irq_fwspec fwspec;
+	struct device_node *np;
 	int ret = -EIO;
 
 	printk(KERN_INFO "Loongson-3nod: SCI PCI init.\n");
 
+	np = of_find_compatible_node(NULL, NULL, "loongson,pch-pic-1.0");
+	if (!np) {
+		pr_err("Loongson-3nod: failed to find PIC device node\n");
+		return -ENODEV;
+	}
+
 	loongson_sci_device = kmalloc(sizeof(struct sci_device), GFP_KERNEL);
 	if (!loongson_sci_device) {
 		printk(KERN_ERR "Loongson-3nod: Malloc mem space for sci_dvice failed.\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_ofnode;
 	}
 	loongson_sci_device->irq = quirks->sci_irq_num;
 
@@ -407,9 +417,10 @@ static int sci_pci_init(void)
 	loongson_sci_device->parameter = 0x00;
 	strcpy(loongson_sci_device->name, EC_SCI_DEV);
 
-	fwspec.fwnode = NULL;
+	fwspec.fwnode = of_fwnode_handle(np);
 	fwspec.param[0] = loongson_sci_device->irq;
-	fwspec.param_count = 1;
+	fwspec.param[1] = IRQ_TYPE_LEVEL_LOW;
+	fwspec.param_count = 2;
 	ret = irq_create_fwspec_mapping(&fwspec);
 	if (ret >= 0) {
 		loongson_sci_device->irq = ret;
@@ -424,10 +435,13 @@ static int sci_pci_init(void)
 		goto out_irq;
 	}
 
+	of_node_put(np);
 	ret = 0;
 	printk(KERN_INFO "Loongson-3nod: SCI PCI init successful.\n");
 	return ret;
 
+out_ofnode:
+	of_node_put(np);
 out_irq:
 	kfree(loongson_sci_device);
 	return ret;
